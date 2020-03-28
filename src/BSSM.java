@@ -104,6 +104,11 @@ public class BSSM {
         System.out.println("delete subvolume: "+btrfs_subvolume_full_path);
         return cmd.call(new String[]{"/bin/bash","-c","sudo btrfs subvolume delete -c "+btrfs_subvolume_full_path});
     }
+    /** Volá příkaz pro odstranění "btrfs subvolume" */
+    public static String cmd_btrfs_subvolume_snapshot_delete(String btrfs_subvolume_full_path) throws IOException {
+        System.out.println("delete subvolume snapshot: "+btrfs_subvolume_full_path);
+        return cmd.call(new String[]{"/bin/bash","-c","sudo btrfs subvolume delete -c "+btrfs_subvolume_full_path});
+    }
     
     /** Volá příkaz pro odstranění "btrfs subvolume" */
     public static String cmd_btrfs_subvolume_snapshot_create(String src_btrfs_subvolume_full_path,String target_btrfs_snapshot_fullpath) throws IOException {
@@ -117,6 +122,13 @@ public class BSSM {
         System.out.println("create subvolume: "+btrfs_subvolume_full_path);
         //sudo btrfs subvolume create /srv/dev-disk-by-label-btrfs/rock
         return cmd.call(new String[]{"/bin/bash","-c","sudo btrfs subvolume create "+btrfs_subvolume_full_path});
+    }
+    
+    /** Volá příkaz pro vytvoření "btrfs subvolume" */
+    public static String cmd_mkdir(String dir_full_path) throws IOException {
+        System.out.println("mkdir: "+dir_full_path);
+        //sudo mkdir -p create /srv/dev-disk-by-label-btrfs/rock/.snapshot
+        return cmd.call(new String[]{"/bin/bash","-p",dir_full_path});
     }
     
     public static List<String> getMonthSnapshots(List<String> snapshots_all,String snapshot_dir){
@@ -162,6 +174,7 @@ public class BSSM {
         String btrfs_root_path = "/srv/dev-disk-by-label-btrfs/";
         if(args!=null && args.length>n && args[n]!=null && !args[n].isEmpty()){
             btrfs_root_path = args[n];
+            if(!btrfs_root_path.endsWith("/")) btrfs_root_path += "/";
         }
         
         n++;
@@ -174,7 +187,7 @@ public class BSSM {
         //Výchozí plná cesta k subvolume adresáři
         //String btrfs_subvolume_full_path = "/srv/dev-disk-by-label-btrfs/rock/";
         String btrfs_subvolume_full_path = btrfs_root_path+btrfs_subvolume_path;
-        printBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
+//        printBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
         
         List<String> subvolumes = getBtrfsSubvolumeNames(btrfs_root_path);
         String btrfs_subvolume_name = btrfs_subvolume_path.replace("/","");
@@ -196,12 +209,14 @@ public class BSSM {
             snapshot_dir = args[n];
         }
         
+        cmd_mkdir(btrfs_subvolume_full_path+snapshot_dir);
+        
         List list = getBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
 //        printBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
         
         Calendar now = Calendar.getInstance();
-        now.set(Calendar.MONTH, ThreadLocalRandom.current().nextInt(0, 12));
-        now.set(Calendar.DAY_OF_MONTH, ThreadLocalRandom.current().nextInt(1, 28));
+//        now.set(Calendar.MONTH, ThreadLocalRandom.current().nextInt(0, 12));
+//        now.set(Calendar.DAY_OF_MONTH, ThreadLocalRandom.current().nextInt(1, 28));
 
         //1. Pokud existuje snapshot pro tento rok, tak jej smaž a vytvoř znovu
         int year = now.get(Calendar.YEAR);
@@ -209,7 +224,7 @@ public class BSSM {
         String year_snapshot_full_name = btrfs_subvolume_full_path+year_snapshot_name;
         boolean year_snapshot_exists = list.contains(year_snapshot_name);
         if(year_snapshot_exists){
-            cmd_btrfs_subvolume_delete(year_snapshot_full_name);
+            cmd_btrfs_subvolume_snapshot_delete(year_snapshot_full_name);
         }
         cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path, year_snapshot_full_name);
         
@@ -219,7 +234,7 @@ public class BSSM {
         String month_snapshot_full_name = btrfs_subvolume_full_path+month_snapshot_name;
         boolean month_snapshot_exists = list.contains(month_snapshot_name);
         if(month_snapshot_exists){
-            cmd_btrfs_subvolume_delete(month_snapshot_full_name);
+            cmd_btrfs_subvolume_snapshot_delete(month_snapshot_full_name);
         }
         cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path, month_snapshot_full_name);
         
@@ -228,14 +243,20 @@ public class BSSM {
         //2.1 Pokud existuje více než 12 měsíčních snapshotů, pak ty nadlimitní nejstarší odstraň.
         List<String> snapshots_all = getBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
         List<String> monthSnapshots = getMonthSnapshots(snapshots_all,snapshot_dir);
-        int max_month_snapshots = 4;
+        int max_month_snapshots = 12;
         if(monthSnapshots.size()>max_month_snapshots){
             for (int i = 0; i < monthSnapshots.size()-max_month_snapshots; i++) {
                 String month_snapshot_name_old = monthSnapshots.get(i);
                 String month_snapshot_full_name_old = btrfs_subvolume_full_path+month_snapshot_name_old;
-                cmd_btrfs_subvolume_delete(month_snapshot_full_name_old);
+                cmd_btrfs_subvolume_snapshot_delete(month_snapshot_full_name_old);
             }
         }
+        
+//        for (String month_snapshot_name0 : snapshots_all) {
+//            String month_snapshot_full_name0 = btrfs_subvolume_full_path+month_snapshot_name0;
+//            cmd_btrfs_subvolume_snapshot_delete(month_snapshot_full_name0);
+//        }
+//        if(true) return;
         
         //3. Pokud existuje snapshot pro tento den, tak jej smaž a založ nový
         int day = now.get(Calendar.DAY_OF_MONTH);
@@ -243,23 +264,23 @@ public class BSSM {
         String day_snapshot_full_name = btrfs_subvolume_full_path+day_snapshot_name;
         boolean day_snapshot_exists = list.contains(day_snapshot_name);
         if(day_snapshot_exists){
-            cmd_btrfs_subvolume_delete(day_snapshot_full_name);
+            cmd_btrfs_subvolume_snapshot_delete(day_snapshot_full_name);
         }
         cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path, day_snapshot_full_name);
         
         //3.1 Pokud existuje více než 31 denních snapshotů, pak ty nejstarší odstraň.
         snapshots_all = getBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
         List<String> daySnapshots = getDaySnapshots(snapshots_all,snapshot_dir);
-        int max_day_snapshots = 4;
+        int max_day_snapshots = 31;
         if(daySnapshots.size()>max_day_snapshots){
             for (int i = 0; i < daySnapshots.size()-max_day_snapshots; i++) {
                 String day_snapshot_name_old = daySnapshots.get(i);
                 String day_snapshot_full_name_old = btrfs_subvolume_full_path+day_snapshot_name_old;
-                cmd_btrfs_subvolume_delete(day_snapshot_full_name_old);
+                cmd_btrfs_subvolume_snapshot_delete(day_snapshot_full_name_old);
             }
         }        
         
-        printBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
+//        printBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path);
     }
     
     public static class regex{
