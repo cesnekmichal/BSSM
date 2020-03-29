@@ -11,5 +11,5 @@
 #	│	│	│	│	│	│
 #	*	*	*	*	*	user	command to execute
 
-#	every hour in zero minutes
-	0	*	*	*	*	root	java /srv/dev-disk-by-label-btrfs/rock/BSSM/src/BSSM.java /srv/dev-disk-by-label-btrfs/ rock .snapshots
+#	every hour in zero minutes                                          #btrfs_root_path#   #btrfs_subvolume_path#   #snapshot_dir#
+	0	*	*	*	*	root	java /opt/BSSM.java /srv/dev-disk-by-label-btrfs/ rock .snapshots
