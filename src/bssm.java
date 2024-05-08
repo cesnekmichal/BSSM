@@ -173,6 +173,28 @@ public class bssm {
                 }
             };
         }});
+        options.add(new Option("readonly","Change all subvolume/snapshots to readonly","true/false/test"){{
+            action = ()->{
+                switch(params[0]){
+                    case "true":
+                    case "false":
+                        for (String btrfs_subvolume_name : getBtrfsSnapshotsNames(root_path)) {
+                            cmd_btrfs_subvolume_or_snapshot_readonly(root_path+btrfs_subvolume_name, params[0], false);
+                            String readOnlyStatus = cmd_btrfs_subvolume_or_snapshot_readonly_test(root_path+btrfs_subvolume_name);
+                            System.out.println(btrfs_subvolume_name + " [" + readOnlyStatus + "]");
+                        }
+                        break;
+                    case "test":
+                        for (String btrfs_subvolume_name : getBtrfsSnapshotsNames(root_path)) {
+                            String readOnlyStatus = cmd_btrfs_subvolume_or_snapshot_readonly_test(root_path+btrfs_subvolume_name);
+                            System.out.println(btrfs_subvolume_name + " [" + readOnlyStatus + "]");
+                        }
+                        break;
+                    default:
+                        System.out.println("Missing or wong value of parameter -readonly=true/false/test");
+                }
+            };
+        }});          
     }
     
     public static int toInt(String s,int defaultValue){
@@ -193,6 +215,14 @@ public class bssm {
         String cmd_out = cmd_btrfs_subvolume_list(btrfs_subvolume_path);
         //Zjistime si seznam vsech subvolumes
         return extractSubvolumeNames(cmd_out);
+    }
+
+    /** Vycte seznam vsech subvolumu mimo snapshoty! */
+    public static List<String> getBtrfsSnapshotsNames(String btrfs_subvolume_path){
+        //Zjistime si seznam vsech snapshots
+        String cmd_out = cmd_btrfs_subvolume_snapshot_list(btrfs_subvolume_path);
+        List<String> only_snapshots = extractSubvolumeSnapshotNames(cmd_out);
+        return only_snapshots;
     }
     
     /** Vycte seznam vsech subvolumu mimo snapshoty! */
@@ -268,6 +298,26 @@ public class bssm {
         getBtrfsSubvolumeSnapshotNames(btrfs_subvolume_full_path).forEach((l)->System.out.println(l));
     }
     
+    /** Vola prikaz pro "btrfs subvolume" nebo "btrfs subvolume snapshot" nastaveni readonly parametru true/false. */
+    public static String cmd_btrfs_subvolume_or_snapshot_readonly(String btrfs_subvolume_full_path,String true_false,boolean printCommand){
+        if(printCommand) System.out.println("readonly '"+true_false+"' subvolume/snapshot: "+btrfs_subvolume_full_path);
+        return cmd.call(new String[]{"/bin/bash","-c","sudo btrfs property set -ts '"+btrfs_subvolume_full_path+"' "+" ro "+true_false});
+    }
+    
+    /** Vola prikaz pro "btrfs subvolume" nebo "btrfs subvolume snapshot" nastaveni readonly parametru true/false. */
+    public static String cmd_btrfs_subvolume_or_snapshot_readonly_test(String btrfs_subvolume_full_path){
+        //System.out.println("readonly test subvolume/snapshot: "+btrfs_subvolume_full_path);
+        String result = cmd.call(new String[]{"/bin/bash","-c","sudo btrfs property get -ts '"+btrfs_subvolume_full_path+"'"});
+        switch (result.trim()) {
+            case "ro=false":
+                return "readonly=FALSE";
+            case "ro=true":
+                return "readonly=TRUE";
+            default:
+                return "ERROR: "+result;
+        }
+    }
+    
     /** Vola prikaz pro odstraneni "btrfs subvolume" nebo "btrfs subvolume snapshot" */
     public static String cmd_btrfs_subvolume_or_snapshot_delete(String btrfs_subvolume_full_path){
         System.out.println("delete subvolume/snapshot: "+btrfs_subvolume_full_path);
@@ -291,7 +341,7 @@ public class bssm {
     /** Vola prikaz pro vytvoreni "btrfs subvolume" */
     public static String cmd_mkdir(String dir_full_path){
         System.out.println("mkdir: "+dir_full_path);
-        //sudo mkdir -p create /srv/dev-disk-by-label-data/data/.snapshot
+        //sudo mkdir -p create /srv/dev-disk-by-label-data/data/.snapshots
         return cmd.call(new String[]{"/bin/bash","-c","sudo mkdir -p create '"+dir_full_path+"'"});
     }
     
