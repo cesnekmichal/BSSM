@@ -1,7 +1,9 @@
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.io.Reader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -9,12 +11,15 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * file lacation: /opt/bssm.java
@@ -40,11 +45,18 @@ public class bssm {
     static {
         help = new Option("help","Show all options"){{
             action = ()->{
-                System.out.println("<-------------------------------------------------->");
+                System.out.println("<-BTRFS-SUBVOLUME-SNAPSHOT-MANAGER-HELP------------>");
                 for (Option option : options) {
                     System.out.println(option);
                 }
                 System.out.println("<-------------------------------------------------->");
+                for (Option o1 : options) {
+                    for (Option o2 : options) {
+                        if(o1!=o2 && o1.name.startsWith(o2.name)){
+                            System.err.println("Pozor!!! Nejednoznacne prekryvajici se volby: "+o1.name+" <=> "+o2.name);
+                        }
+                    }
+                }
             };
         }};
         options.add(help);
@@ -55,6 +67,12 @@ public class bssm {
         options.add(new Option("RP","(R)oot full (P)ath to BTRFS file system","/srv/dev-disk-by-label-data/"){{
             action = ()->{
                 root_path = params[0];
+                if(!root_path.endsWith("/")) root_path += "/";
+            };
+        }});    
+        options.add(new Option("RD","(R)oot (D)evice with BTRFS file system","/dev/nvme0n1"){{
+            action = ()->{
+                root_path = dev_path_2_mountpoint_path(params[0]);
                 if(!root_path.endsWith("/")) root_path += "/";
             };
         }});    
@@ -125,7 +143,7 @@ public class bssm {
     }
     
     static {
-        options.add(new Option("list","List subvolumes and snapshots"){{
+        options.add(new Option("listSS","List (s)ubvolumes and (s)napshots"){{
             action = ()->{
                 for (String btrfs_subvolume_name : getBtrfsSubvolumeAndSnapshotsNames(root_path)) {
                     System.out.println(btrfs_subvolume_name);
@@ -134,7 +152,7 @@ public class bssm {
         }});
         options.add(new Option("snapshot","Make custom snapshot in snapshot dir","custom_name"){{
             action = ()->{
-                cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path(),snapshots_path+params[0]);
+                cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path(),root_path+subvolume_path+snapshots_path+params[0]);
             };
         }});
         options.add(new Option("subvolume","Make custom subvolume in root dir","custom_name"){{
@@ -194,7 +212,172 @@ public class bssm {
                         System.out.println("Missing or wong value of parameter -readonly=true/false/test");
                 }
             };
-        }});          
+        }});
+    }
+
+    static{
+        options.add(new Option.OptionDelimiter("<-RSYNC-------------------------------------------->"));
+    }
+
+    public static String remote_storage          = "rsync://data@data.local:873/data/";
+    public static String remote_storage_password = "data";
+    public static String remote_snapshots        = ".snapshots/";
+    public static String[] rsync_excludes        = {".recycle",".snapshots",".watchdog"};
+    static{
+        options.add(new Option("RRS","(R)emote (r)sync (s)torage with BTRFS file system,password","rsync://data@data.local:873/data/","data"){{
+            action = ()->{
+                remote_storage          = params[0];
+                if(!remote_storage.endsWith("/")) remote_storage += "/";
+                remote_storage_password = params[1];
+            };
+        }});
+        options.add(new Option("RSP","(R)emote (S)napshots (P)ath",".snapshots/"){{
+            action = ()->{
+                remote_snapshots = params[0];
+                if(!remote_snapshots.endsWith("/")) remote_snapshots += "/";
+            };
+        }});
+        options.add(new Option("listRS","List (R)emote (S)napshots"){{
+            action = ()->{
+                for (String remote_snapshot : getRemoteSnapshots()) {
+                    System.out.println(remote_snapshot);
+                }
+            };
+        }});
+        options.add(new Option("setSyncExcludes","Set Excludes from calling rsync",Stream.of(rsync_excludes).collect(Collectors.joining("|"))){{
+            action = ()->{
+                rsync_excludes = params[0].split("|");
+            };
+        }});
+        options.add(new Option("syncSnapshots","Sync with all Remote snapshots"){{
+            action = ()->{
+                syncRemoteSnapshtos();
+            };
+        }});
+    }
+
+//    static {
+//        options.add(new Option("runDev","Running some test development function."){{
+//            action = ()->{
+//                runDev();
+//            };
+//        }});          
+//    }
+//    
+//    public static void runDev(){
+//        
+//    }
+    
+    public static void syncRemoteSnapshtos(){
+        List<String> remoteSnapshots = getRemoteSnapshots();
+        List<String> localSnapshots = getLocalSnapshots();
+        if(remoteSnapshots.isEmpty()) return;
+        
+        //Odstranit nadbytecne snapshoty
+        for (String localSnapshot : localSnapshots.toArray(new String[0])) {
+            if(!remoteSnapshots.contains(localSnapshot)){
+                System.out.println("Removing snapshot: "+localSnapshot);
+                cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
+                localSnapshots.remove(localSnapshot);
+            }
+        }
+        
+        //Odstraníme změněné snapshoty
+        // - odstranění provádíme tak, že odstaníme všechny snapshoty od prvního změněného
+        boolean anyChanged = false;
+        for (String localSnapshot : localSnapshots.toArray(new String[0])) {
+            if(!anyChanged && isSnapshotChanged(localSnapshot)){
+                anyChanged = true;
+            }
+            if(anyChanged) {
+                cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
+                localSnapshots.remove(localSnapshot);
+            }
+        }
+        
+        //Synchronizujeme snapshoty
+        for (String remoteSnapshot : remoteSnapshots) {
+            if(localSnapshots.contains(remoteSnapshot)) continue;
+            System.out.println("Missing snapshot: "+remoteSnapshot);
+            syncRemoteSnapshotToLocalRootDir(remoteSnapshot);
+            cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path(),root_path+subvolume_path+snapshots_path+remoteSnapshot);
+        }
+        
+    }
+    
+    private static void syncRemoteSnapshotToLocalRootDir(String snapshotName){
+        if(snapshotName==null || snapshotName.isBlank()) return;
+        if(!snapshotName.endsWith("/")) snapshotName += "/";
+        String[] exclude_params = !isEmpty(rsync_excludes) ? Stream.of(rsync_excludes).map((e)->"--exclude="+e+"").toArray(String[]::new) : null;
+        cmd.call2(flat(new String[][]{{"rsync","-rtP","--delete","--force"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path}}),
+                          new String[]{"RSYNC_PASSWORD="+remote_storage_password});//env variable
+    }
+    
+    private static boolean isSnapshotChanged(String snapshotName){
+        if(snapshotName==null || snapshotName.isBlank()) return false;
+        if(!snapshotName.endsWith("/")) snapshotName += "/";
+        String[] exclude_params = !isEmpty(rsync_excludes) ? Stream.of(rsync_excludes).map((e)->"--exclude="+e+"").toArray(String[]::new) : null;
+        String std_out = cmd.call(flat(new String[][]{{"rsync","-rtP","--dry-run"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path+snapshots_path+snapshotName}}),
+                                          new String[]{"RSYNC_PASSWORD="+remote_storage_password}); //env variable
+        System.out.println(std_out);
+        return !std_out.trim().equals("receiving incremental file list");
+    }
+    
+    private static boolean isEmpty(String string){
+        return string==null || string.trim().isEmpty();
+    }
+    private static boolean isEmpty(String[] strings){
+        return Stream.of(strings).filter(Objects::nonNull).collect(Collectors.joining()).trim().isEmpty();
+    }
+    private static String[] flat(String[][] strings){
+        return flatten(strings).filter(Objects::nonNull).toArray(String[]::new);
+    }
+    private static Stream<Object> flatten(Object[] array) {
+        return Arrays.stream(array).flatMap(o -> o instanceof Object[] ? flatten((Object[]) o) : Stream.of(o));
+    }
+    
+    public static List<String> getLocalSnapshots(){
+        return Stream.of(new File(root_path+subvolume_path+snapshots_path).list()).sorted(snapshotComparator).collect(Collectors.toList());
+    }
+    
+    public static List<String> getRemoteSnapshots(){
+        //env RSYNC_PASSWORD=data rsync --list-only rsync://data@data.local:873/data/.snapshots/
+        String cmd_out = cmd.call(new String[]{"rsync","--list-only",remote_storage+remote_snapshots},new String[]{"RSYNC_PASSWORD="+remote_storage_password});
+        /*
+        drwxrwsrwx            130 2024/05/07 21:08:30 .
+        drwxrwsr-x              8 2024/05/07 21:08:30 .recycle
+        drwxr-xr-x            828 2024/05/08 08:59:03 .snapshots
+        drwxrwsr-x            280 2024/04/21 12:56:24 CHAPPIE
+        drwxrwsr-x             74 2022/04/22 15:08:17 Dokumenty
+        drwxrwsr-x          3,372 2024/03/26 18:35:56 Filmy
+        drwxrwsr-x            136 2024/01/30 15:13:35 Hry
+        drwxrwsr-x            686 2023/11/07 10:07:30 Install-OS
+        */
+        String[] lines = cmd_out.trim().split("\r|\n|\r\n");
+        //Delší než 46 znaků, ořízneme od 46 znaku, nesmí to být tečka.
+        List<String> list = Stream.of(lines).filter((l)->l.length()>46).map((l)->l.substring(46)).filter((s)->!s.equals(".")).collect(Collectors.toList());
+        list.sort(snapshotComparator);
+        return list;
+    } 
+    
+    public static Comparator<String> snapshotComparator = new Comparator<String>() {
+        private String normalize(String snapshotName){
+            switch (snapshotName.length()) {
+                case 4 : return snapshotName+".99.99"; //2024       -> 2024.99.99
+                case 7 : return snapshotName+".99";    //2024.05    -> 2024.05.99
+                case 10: return snapshotName;          //2024.05.19 -> 2024.05.19
+            }
+            return snapshotName;
+        }
+        @Override
+        public int compare(String o1, String o2) {
+            return normalize(o1).compareTo(normalize(o2));
+        }
+    };
+    
+    /** Najde pro zařížení napr "/dev/nvme0n1" cestu narp "/srv/dev-disk-by-uuid-052e89dd-b76a-42fc-bd8f-c812bc1b822a"  */
+    public static String dev_path_2_mountpoint_path(String dev_path){
+        return cmd.call(new String[]{"lsblk","--nodeps",dev_path,"--output","MOUNTPOINT","--noheadings"}).trim();
     }
     
     public static int toInt(String s,int defaultValue){
@@ -210,10 +393,10 @@ public class bssm {
         return cmd.call(new String[]{"/bin/bash","-c","sudo btrfs subvolume list -t --sort=path "+btrfs_subvolume_path});
     }
 
-    /** Vycte seznam vsech subvolumu mimo snapshoty! */
+    /** Vycte seznam vsech subvolume/snapshots! */
     public static List<String> getBtrfsSubvolumeAndSnapshotsNames(String btrfs_subvolume_path){
         String cmd_out = cmd_btrfs_subvolume_list(btrfs_subvolume_path);
-        //Zjistime si seznam vsech subvolumes
+        //Zjistime si seznam vsech subvolume/snapshots
         return extractSubvolumeNames(cmd_out);
     }
 
@@ -504,8 +687,12 @@ public class bssm {
             System.err.println(IS.toString(p.getErrorStream()));
         }
         public static String call(String[] cmds) {
+            return call(cmds, null);
+        }
+        public static String call(String[] cmds,String[] envp) {
             try {
-                Process p = Runtime.getRuntime().exec(cmds);
+                System.out.println(Stream.of(cmds).collect(Collectors.joining(" ")));
+                Process p = Runtime.getRuntime().exec(cmds,envp);
                 String sout = IS.toString(p.getInputStream());
                 String serr = IS.toString(p.getErrorStream());
                 if(serr!=null && !serr.isBlank()) System.err.println(serr);
@@ -513,6 +700,16 @@ public class bssm {
             } catch (IOException ex) {
                 ex.printStackTrace();
                 return null;
+            }
+        }
+        public static void call2(String[] cmds,String[] envp) {
+            try {
+                System.out.println(Stream.of(cmds).collect(Collectors.joining(" ")));
+                Process p = Runtime.getRuntime().exec(cmds,envp);
+                IS.toStream(p.getInputStream(),System.out);
+                IS.toStream(p.getErrorStream(),System.err);
+            } catch (IOException ex) {
+                ex.printStackTrace();
             }
         }
     }
@@ -527,13 +724,21 @@ public class bssm {
         }
         public static String toString(InputStream is) throws IOException{
             StringBuilder textBuilder = new StringBuilder();
-            try (Reader reader = new BufferedReader(new InputStreamReader(is, Charset.forName(StandardCharsets.UTF_8.name())))) {
+            try (Reader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
                 int c = 0;
                 while ((c = reader.read()) != -1) {
                     textBuilder.append((char) c);
                 }
             }
             return textBuilder.toString();
+        }
+        public static void toStream(InputStream is,PrintStream ps) throws IOException{
+            try (Reader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                int c = 0;
+                while ((c = reader.read()) != -1) {
+                    ps.append((char) c);
+                }
+            }
         }
     }
     
@@ -600,6 +805,15 @@ public class bssm {
         }
         public void print(){
             System.out.println(this);
+        }
+        public static class OptionDelimiter extends Option{
+            public OptionDelimiter(String text) {
+                super(text, "", new String[0]);
+            }
+            @Override
+            public String toString() {
+                return name;
+            }
         }
     }
     
