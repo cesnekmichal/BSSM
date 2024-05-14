@@ -11,5 +11,5 @@
 #	│	│	│	│	│	│
 #	*	*	*	*	*	user	command to execute
 
-#	every hour in 59 minutes                                             #root_path                       #Subvolume_Path   #snapshots_path#
-	59	*	*	*	*	root	java /opt/bssm.java -RP=/srv/dev-disk-by-label-data/ -SP=data/ -SSP=.snapshots/ -doSnapshots > /opt/bssm.log
+#	every hour in 59 minutes                                            #root_path       #Subvolume_Path   #snapshots_path#
+	59	*	*	*	*	root	java /opt/bssm.java -RD=/dev/nvme0n1 -SP=data/ -SSP=.snapshots/ -doSnapshots > /opt/bssm.log
