@@ -6,4 +6,4 @@
 # sudo apt-get install curl -y
 # sh /opt/syncSnapshots.sh
 
-java /opt/bssm.java -RD -syncSnapshots
+sudo java /opt/bssm.java -RD -syncSnapshots

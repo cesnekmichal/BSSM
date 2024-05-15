@@ -70,7 +70,7 @@ public class bssm {
                 if(!root_path.endsWith("/")) root_path += "/";
             };
         }});    
-        options.add(new Option("RD","(R)oot (D)evice with BTRFS file system","/dev/nvme0n1"){{
+        options.add(new Option("RD","(R)oot (D)evice with BTRFS file system","/dev/nvme0n1p1"){{
             action = ()->{
                 root_path = dev_path_2_mountpoint_path(params[0]);
                 if(!root_path.endsWith("/")) root_path += "/";
@@ -273,10 +273,12 @@ public class bssm {
         List<String> localSnapshots = getLocalSnapshots();
         if(remoteSnapshots.isEmpty()) return;
         
+        System.out.println("[Sync snapshots]");
+        
         //Odstranit nadbytecne snapshoty
         for (String localSnapshot : localSnapshots.toArray(new String[0])) {
             if(!remoteSnapshots.contains(localSnapshot)){
-                System.out.println("Removing snapshot: "+localSnapshot);
+                System.out.println("[Removing snapshot: "+localSnapshot+" ]");
                 cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
                 localSnapshots.remove(localSnapshot);
             }
@@ -286,10 +288,13 @@ public class bssm {
         // - odstranění provádíme tak, že odstaníme všechny snapshoty od prvního změněného
         boolean anyChanged = false;
         for (String localSnapshot : localSnapshots.toArray(new String[0])) {
+            if(!anyChanged)
+                System.out.println("[Test snapshot changed: "+localSnapshot+" ]");
             if(!anyChanged && isSnapshotChanged(localSnapshot)){
                 anyChanged = true;
             }
             if(anyChanged) {
+                System.out.println("[Removing snapshot: "+localSnapshot+" ]");
                 cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
                 localSnapshots.remove(localSnapshot);
             }
@@ -298,18 +303,35 @@ public class bssm {
         //Synchronizujeme snapshoty
         for (String remoteSnapshot : remoteSnapshots) {
             if(localSnapshots.contains(remoteSnapshot)) continue;
-            System.out.println("Missing snapshot: "+remoteSnapshot);
+            System.out.println("[Sync snapshot: "+remoteSnapshot+" ]");
+            //Sync remote snapshot to local root dir
             syncRemoteSnapshotToLocalRootDir(remoteSnapshot);
+            System.out.println("[Create snapshot: "+remoteSnapshot+" ]");
+            //Create snapshot
             cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path(),root_path+subvolume_path+snapshots_path+remoteSnapshot);
         }
         
+        System.out.println("[Sync current data]");
+        //Synchronizujeme aktualni stav
+        syncRemoteRootDirToLocalRootDir();
+        
+    }
+    
+    private static void syncRemoteRootDirToLocalRootDir(){
+        String[] exclude_params = !isEmpty(rsync_excludes) ? Stream.of(rsync_excludes).map((e)->"--exclude="+e+"").toArray(String[]::new) : null;
+        //Sample call rsync as user data
+        //sudo -u data -i rsync -rtP --delete --force rsync://data@data.local:873/data/ /srv/dev-disk-by-label-data/data/ --log-file /var/log/rsync.log
+        cmd.call2(flat(new String[][]{{"sudo","-u","data","-i","rsync","-rtP","--delete","--force"},exclude_params,{remote_storage,root_path+subvolume_path},{"--log-file","/var/log/rsync.log"}}),
+                          new String[]{"RSYNC_PASSWORD="+remote_storage_password});//env variable
     }
     
     private static void syncRemoteSnapshotToLocalRootDir(String snapshotName){
         if(snapshotName==null || snapshotName.isBlank()) return;
         if(!snapshotName.endsWith("/")) snapshotName += "/";
         String[] exclude_params = !isEmpty(rsync_excludes) ? Stream.of(rsync_excludes).map((e)->"--exclude="+e+"").toArray(String[]::new) : null;
-        cmd.call2(flat(new String[][]{{"rsync","-rtP","--delete","--force"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path}}),
+        //Sample call rsync as user data
+        //sudo -u data -i rsync -rtP --delete --force rsync://data@data.local:873/data/.snapshots/2024/ /srv/dev-disk-by-label-data/data/ --log-file /var/log/rsync.log
+        cmd.call2(flat(new String[][]{{"sudo","-u","data","-i","rsync","-rtP","--delete","--force"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path},{"--log-file","/var/log/rsync.log"}}),
                           new String[]{"RSYNC_PASSWORD="+remote_storage_password});//env variable
     }
     
@@ -337,7 +359,9 @@ public class bssm {
     }
     
     public static List<String> getLocalSnapshots(){
-        return Stream.of(new File(root_path+subvolume_path+snapshots_path).list()).sorted(snapshotComparator).collect(Collectors.toList());
+        File snapshotsDir = new File(root_path+subvolume_path+snapshots_path);
+        snapshotsDir.mkdirs();
+        return Stream.of(snapshotsDir.list()).sorted(snapshotComparator).collect(Collectors.toList());
     }
     
     public static List<String> getRemoteSnapshots(){
