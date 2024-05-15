@@ -15,3 +15,4 @@
 
 # Make year, month and day snapshots
 	59	*	*	*	*	root	java /opt/bssm.java -RD=/dev/nvme0n1   -SP=data/         -SSP=.snapshots/ -doSnapshots > /opt/bssm.log
+
