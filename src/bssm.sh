@@ -6,4 +6,4 @@
 # sudo apt-get install curl -y
 # sh /opt/syncSnapshots.sh
 
-sudo java /opt/bssm.java -RD=/dev/nvme0n1 -syncSnapshots=full
+sudo java /opt/bssm.java -RD=/dev/nvme0n1 $1 $2 $3 $4 $5

@@ -249,8 +249,9 @@ public class bssm {
                 rsync_excludes = params[0].split("|");
             };
         }});
-        options.add(new Option("syncSnapshots","Sync with all Remote snapshots"){{
+        options.add(new Option("syncSnapshots","Sync with all Remote snapshots (dry/full)","dry"){{
             action = ()->{
+                fullSync = params[0].equals("full");
                 syncRemoteSnapshtos();
             };
         }});
@@ -267,7 +268,7 @@ public class bssm {
 //    public static void runDev(){
 //        
 //    }
-    
+    static boolean fullSync = false;
     public static void syncRemoteSnapshtos(){
         List<String> remoteSnapshots = getRemoteSnapshots();
         List<String> localSnapshots = getLocalSnapshots();
@@ -275,12 +276,22 @@ public class bssm {
         
         System.out.println("[Sync snapshots]");
         
+        if(!fullSync){
+            System.out.println("{Local snapshots}: "+root_path+subvolume_path+snapshots_path);
+            localSnapshots.forEach((s)->System.out.println(s));
+            System.out.println("{Remote snapshots}: "+remote_storage+remote_snapshots);
+            remoteSnapshots.forEach((s)->System.out.println(s));
+            System.out.println("{---------------}");
+        }
+        
         //Odstranit nadbytecne snapshoty
         for (String localSnapshot : localSnapshots.toArray(new String[0])) {
             if(!remoteSnapshots.contains(localSnapshot)){
-                System.out.println("[Removing snapshot: "+localSnapshot+" ]");
+                System.out.println("[Removing unnecessary snapshot: "+localSnapshot+" ]");
+                if(fullSync){
                 cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
                 localSnapshots.remove(localSnapshot);
+                }
             }
         }
         
@@ -294,9 +305,11 @@ public class bssm {
                 anyChanged = true;
             }
             if(anyChanged) {
-                System.out.println("[Removing snapshot: "+localSnapshot+" ]");
+                System.out.println("[Removing changed snapshot: "+localSnapshot+" ]");
+                if(fullSync){
                 cmd_btrfs_subvolume_or_snapshot_delete(root_path+subvolume_path+snapshots_path+localSnapshot);
                 localSnapshots.remove(localSnapshot);
+                }
             }
         }
         
@@ -304,14 +317,19 @@ public class bssm {
         for (String remoteSnapshot : remoteSnapshots) {
             if(localSnapshots.contains(remoteSnapshot)) continue;
             System.out.println("[Sync snapshot: "+remoteSnapshot+" ]");
+            if(fullSync){
             //Sync remote snapshot to local root dir
             syncRemoteSnapshotToLocalRootDir(remoteSnapshot);
+            }
             System.out.println("[Create snapshot: "+remoteSnapshot+" ]");
+            if(fullSync){
             //Create snapshot
             cmd_btrfs_subvolume_snapshot_create(btrfs_subvolume_full_path(),root_path+subvolume_path+snapshots_path+remoteSnapshot);
+            }
         }
         
         System.out.println("[Sync current data]");
+        if(fullSync)
         //Synchronizujeme aktualni stav
         syncRemoteRootDirToLocalRootDir();
         
@@ -342,7 +360,11 @@ public class bssm {
         String std_out = cmd.call(flat(new String[][]{{"rsync","-rtP","--dry-run"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path+snapshots_path+snapshotName}}),
                                           new String[]{"RSYNC_PASSWORD="+remote_storage_password}); //env variable
         System.out.println(std_out);
-        return !std_out.trim().equals("receiving incremental file list");
+        
+        List<String> std_outs = new ArrayList<>(Arrays.asList(std_out.split("\r\n|\r|\n")));
+        std_outs.remove("receiving incremental file list");
+        //std_outs.remove("./");//pokud nelze změnit modifiet time (špatný vlastník uživatel/skupina složky data, musí to být data/users)
+        return !std_outs.isEmpty();
     }
     
     private static boolean isEmpty(String string){
@@ -361,7 +383,14 @@ public class bssm {
     public static List<String> getLocalSnapshots(){
         File snapshotsDir = new File(root_path+subvolume_path+snapshots_path);
         snapshotsDir.mkdirs();
+        chown("data", "users", root_path+subvolume_path);
+        chown("data", "users", root_path+subvolume_path+snapshots_path);
         return Stream.of(snapshotsDir.list()).sorted(snapshotComparator).collect(Collectors.toList());
+    }
+    
+    public static String chown(String user,String group,String full_path){
+        if(group==null || user==null || full_path==null) return null;
+        return cmd.call(new String[]{"/bin/bash","-c","sudo chown "+user+":"+group+" "+full_path});
     }
     
     public static List<String> getRemoteSnapshots(){

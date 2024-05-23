@@ -12,4 +12,4 @@
 #	│	│	│	│	│	│
 #	*	*	*	*	*	user	command to execute
 
-	1	3	*	*	*	root	java /opt/bssm.java -RD -syncSnapshots
+	0	3	*	*	*	root	/opt/syncSnapshots.sh > /opt/syncSnapshots.log
