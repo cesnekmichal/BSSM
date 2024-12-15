@@ -5,7 +5,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.Reader;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -341,6 +340,7 @@ public class bssm {
         //sudo -u data -i rsync -rtP --delete --force rsync://data@data.local:873/data/ /srv/dev-disk-by-label-data/data/ --log-file /var/log/rsync.log
         cmd.call2(flat(new String[][]{{"sudo","-u","data","-i","rsync","-rtP","--delete","--force"},exclude_params,{remote_storage,root_path+subvolume_path},{"--log-file","/var/log/rsync.log"}}),
                           new String[]{"RSYNC_PASSWORD="+remote_storage_password});//env variable
+        chown("data", "users", "/var/log/rsync.log");
     }
     
     private static void syncRemoteSnapshotToLocalRootDir(String snapshotName){
@@ -351,6 +351,7 @@ public class bssm {
         //sudo -u data -i rsync -rtP --delete --force rsync://data@data.local:873/data/.snapshots/2024/ /srv/dev-disk-by-label-data/data/ --log-file /var/log/rsync.log
         cmd.call2(flat(new String[][]{{"sudo","-u","data","-i","rsync","-rtP","--delete","--force"},exclude_params,{remote_storage+remote_snapshots+snapshotName,root_path+subvolume_path},{"--log-file","/var/log/rsync.log"}}),
                           new String[]{"RSYNC_PASSWORD="+remote_storage_password});//env variable
+        chown("data", "users", "/var/log/rsync.log");
     }
     
     private static boolean isSnapshotChanged(String snapshotName){
